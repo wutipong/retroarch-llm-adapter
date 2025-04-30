@@ -1,5 +1,5 @@
 {
-  "name": "retroarch-llm-adapter",
+  "name": "retroarch-lmstudio-proxy",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
