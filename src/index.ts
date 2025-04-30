@@ -1,9 +1,9 @@
 import express from "express";
 import * as PImage from "pureimage"
-import { base64ToBytes, bytesToBase64 } from 'byte-base64'
+import { bytesToBase64 } from 'byte-base64'
 import { WritableStreamBuffer } from 'stream-buffers'
-import { PNG } from "pngjs";
 import { LLM, LMStudioClient } from "@lmstudio/sdk";
+import pino from "pino";
 
 const app = express()
 const port = 4404
@@ -12,17 +12,24 @@ app.use(express.json({
     type: () => true
 }))
 
-const font = PImage.registerFont("fonts/Mplus1Code-Regular.otf", "MPlus1Code")
+const font = PImage.registerFont("fonts/Mplus1Code-Bold.otf", "MPlus1Code")
 
 const lmstudio = new LMStudioClient();
 var model: LLM
 
 const MODEL_NAME = "gemma-3-4b-it-qat";
+const OUTPUT_WIDTH = 1920
+const OUTPUT_HEIGHT = 1080
+
+const logger = pino({
+    level: process.env.PINO_LOG_LEVEL || 'debug',
+    timestamp: pino.stdTimeFunctions.isoTime,
+  });
 
 app.post('/', async (req, res) => {
     const input = req.body
-    const imgSrc = base64ToBytes(input.image)
-    const inImg = PNG.sync.read(Buffer.from(imgSrc))
+
+    logger.debug(req, "request")
 
     const llmFile = await lmstudio.files.prepareImageBase64("screenshot.png", input.image)
 
@@ -32,14 +39,16 @@ app.post('/', async (req, res) => {
         [
             {
                 location: "message window",
-                original: "こんにちは。"
-                translation: "Hello."
+                original: "こんにちは。",
+                translation: "Hello.",
             },
         ]
         \`\`\`
         `,
         images: [llmFile]
     });
+
+    logger.debug(result.content, "result from LM Studio")
 
     let resultJSON = result.content.trim()
     if (resultJSON.startsWith("```json")) {
@@ -50,19 +59,42 @@ app.post('/', async (req, res) => {
         resultJSON = resultJSON.substring(0, resultJSON.length - 3)
     }
 
-    const translations = JSON.parse(resultJSON)
+    logger.debug(resultJSON, "resultJSON")
 
-    const outImg = PImage.make(inImg.width, inImg.height);
+    const translations = JSON.parse(resultJSON)
+    const outImg = PImage.make(OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
     // get canvas context
     const ctx = outImg.getContext("2d");
 
-    ctx.clearRect(0, 0, inImg.width, inImg.height)
+    ctx.clearRect(0, 0, outImg.width, outImg.height)
 
-    // fill with red
-    ctx.font = "18pt MPlus1Code"
-    ctx.fillStyle = "red";
-    ctx.fillText(translations[0].translation, 0, inImg.height / 2);
+    ctx.fillStyle = "#00000080"
+    ctx.fillRect(0, 0, outImg.width, outImg.height)
+
+    let yPos = 100;
+    const lineHeight = 48;
+
+    for (const t of translations) {
+        // fill with red
+        ctx.font = "28pt MPlus1Code"
+        ctx.fillStyle = "green";
+
+        ctx.fillText(t.location, 10, yPos);
+
+        yPos += lineHeight;
+        ctx.fillStyle = "cyan";
+
+        const lines = t.translation.split('\n')
+
+        for (const l of lines) {
+            const splitted = l.match(/.{1,80}/g)
+            for (const s of splitted) {
+                ctx.fillText(s.trim(), 60, yPos);
+                yPos += lineHeight;
+            }
+        }
+    }
 
     const stream = new WritableStreamBuffer()
 
@@ -85,5 +117,5 @@ app.listen(port, async () => {
     await font.load()
     model = await lmstudio.llm.model(MODEL_NAME);
 
-    console.log(`Server started at port ${port}.`)
+    logger.info(`Server started at port ${port}.`)
 })
